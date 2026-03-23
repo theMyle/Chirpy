@@ -6,31 +6,16 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync/atomic"
-	"time"
 
 	"themyle/chirpy/internal/database"
+	"themyle/chirpy/internal/handlers"
 
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
 
 type Server struct {
 	Addr string
-}
-
-type apiConfig struct {
-	fileServerHits atomic.Int32
-	dbQueries      *database.Queries
-	platform       string
-}
-
-type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
 }
 
 func main() {
@@ -58,25 +43,25 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	apiCfg := &apiConfig{}
-	apiCfg.dbQueries = database.New(db)
-	apiCfg.platform = platform
+	apiCfg := &handlers.APIConfig{}
+	apiCfg.DBQueries = database.New(db)
+	apiCfg.Platform = platform
 
 	// file server
 	mux.Handle("/app/",
-		apiCfg.middlewareMetricsInc(
+		apiCfg.MiddlewareMetricsInc(
 			http.StripPrefix("/app/", http.FileServer(http.Dir("."))),
 		),
 	)
 
 	// health check
-	mux.HandleFunc("GET /api/healthz", checkHealth)
-	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
-	mux.HandleFunc("POST /api/users", apiCfg.createUser)
+	mux.HandleFunc("GET /api/healthz", handlers.CheckHealth)
+	mux.HandleFunc("POST /api/chirps", apiCfg.CreateChirp)
+	mux.HandleFunc("POST /api/users", apiCfg.CreateUser)
 
 	// metrics
-	mux.HandleFunc("GET /admin/metrics", apiCfg.handleMetrics)
-	mux.HandleFunc("POST /admin/reset", apiCfg.handleMetricsReset)
+	mux.HandleFunc("GET /admin/metrics", apiCfg.HandleMetrics)
+	mux.HandleFunc("POST /admin/reset", apiCfg.HandleMetricsReset)
 
 	srv := &http.Server{
 		Handler: mux,

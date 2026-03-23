@@ -1,4 +1,5 @@
-package main
+// Package handlers
+package handlers
 
 import (
 	"encoding/json"
@@ -6,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"themyle/chirpy/internal/database"
@@ -13,37 +15,50 @@ import (
 	"github.com/google/uuid"
 )
 
-func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
+type APIConfig struct {
+	FileServerHits atomic.Int32
+	DBQueries      *database.Queries
+	Platform       string
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+}
+
+func (cfg *APIConfig) MiddlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg.fileServerHits.Add(1)
+		cfg.FileServerHits.Add(1)
 		next.ServeHTTP(w, r)
 	})
 }
 
-// show metrics (hit count)
-func (cfg *apiConfig) handleMetrics(w http.ResponseWriter, r *http.Request) {
+// HandleMetrics - show metrics (hit count)
+func (cfg *APIConfig) HandleMetrics(w http.ResponseWriter, r *http.Request) {
 	content := fmt.Sprintf(`<html>
 	<body>
 	<h1>Welcome, Chirpy Admin</h1>
 	<p>Chirpy has been visted  %d times!</p>
 	</body>
 	</html>
-	`, cfg.fileServerHits.Load())
+	`, cfg.FileServerHits.Load())
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(content))
 }
 
-// set metrics back to zero
-func (cfg *apiConfig) handleMetricsReset(w http.ResponseWriter, r *http.Request) {
-	if cfg.platform == "dev" {
-		err := cfg.dbQueries.DeleteAllUser(r.Context())
+// HandleMetricsReset - metrics back to zero
+func (cfg *APIConfig) HandleMetricsReset(w http.ResponseWriter, r *http.Request) {
+	if cfg.Platform == "dev" {
+		err := cfg.DBQueries.DeleteAllUser(r.Context())
 		if err != nil {
 			w.WriteHeader(500)
 			return
 		}
 
-		cfg.fileServerHits.Store(0)
+		cfg.FileServerHits.Store(0)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("Metrics reset to 0 & Cleared DB\n"))
 		return
@@ -52,7 +67,7 @@ func (cfg *apiConfig) handleMetricsReset(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(403)
 }
 
-func respondWithError(w http.ResponseWriter, code int, msg string) {
+func RespondWithError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 
 	type errorReturnVal struct {
@@ -74,10 +89,10 @@ func respondWithError(w http.ResponseWriter, code int, msg string) {
 	_, _ = w.Write([]byte(dat))
 }
 
-func respondWithJSON(w http.ResponseWriter, code int, payload any) {
+func RespondWithJSON(w http.ResponseWriter, code int, payload any) {
 	dat, err := json.Marshal(payload)
 	if err != nil {
-		respondWithError(w, 500, "Something went wrong")
+		RespondWithError(w, 500, "Something went wrong")
 		return
 	}
 
@@ -86,14 +101,14 @@ func respondWithJSON(w http.ResponseWriter, code int, payload any) {
 	_, _ = w.Write(dat)
 }
 
-func checkHealth(w http.ResponseWriter, r *http.Request) {
+func CheckHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 
 	_, _ = w.Write([]byte("OK"))
 }
 
-func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
+func (cfg *APIConfig) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// parse request body
 	type createUserRequest struct {
 		Email string `json:"email"`
@@ -104,15 +119,15 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&reqBody)
 	if err != nil {
 		log.Printf("ERROR - %s\n", err)
-		respondWithError(w, 400, "Invalid request payload")
+		RespondWithError(w, 400, "Invalid request payload")
 		return
 	}
 
 	// create new user in DB
-	res, err := cfg.dbQueries.CreateUser(r.Context(), reqBody.Email)
+	res, err := cfg.DBQueries.CreateUser(r.Context(), reqBody.Email)
 	if err != nil {
 		log.Printf("ERROR - %s\n", err)
-		respondWithError(w, 409, "Email already taken")
+		RespondWithError(w, 409, "Email already taken")
 		return
 	}
 
@@ -124,10 +139,10 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 		Email:     res.Email,
 	}
 
-	respondWithJSON(w, 201, userResponse)
+	RespondWithJSON(w, 201, userResponse)
 }
 
-func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
+func (cfg *APIConfig) CreateChirp(w http.ResponseWriter, r *http.Request) {
 	type CreateChirpRequest struct {
 		Body   string    `json:"body"`
 		UserID uuid.UUID `json:"user_id"`
@@ -146,13 +161,13 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		log.Printf("Error decoding JSON: %s\n", err)
-		respondWithError(w, 400, "Invalid Request Payload")
+		RespondWithError(w, 400, "Invalid Request Payload")
 		return
 	}
 
 	// validate chirp
 	if len(req.Body) > 140 {
-		respondWithError(w, 400, "Chirp is too long")
+		RespondWithError(w, 400, "Chirp is too long")
 		return
 	}
 
@@ -186,10 +201,10 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 		Body:   req.Body,
 	}
 
-	chirp, err := cfg.dbQueries.CreateChirp(r.Context(), params)
+	chirp, err := cfg.DBQueries.CreateChirp(r.Context(), params)
 	if err != nil {
 		log.Printf("Error writing Chirp to DB: %s\n", err)
-		respondWithError(w, 500, "Server Error\n")
+		RespondWithError(w, 500, "Server Error\n")
 		return
 	}
 
@@ -201,5 +216,5 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 		UserID:    chirp.UserID,
 	}
 
-	respondWithJSON(w, 201, response)
+	RespondWithJSON(w, 201, response)
 }
